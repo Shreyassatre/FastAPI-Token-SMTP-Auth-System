@@ -120,12 +120,12 @@ async def register_user(username: str, email: EmailStr, full_name: str, password
     </body>
     </html>
     """
-    # background_tasks.add_task(send_email, to=new_user.email, subject="Email Verification", body=email_body)
+    background_tasks.add_task(send_email, to=new_user.email, subject="Email Verification", body=email_body)
 
 
     log_activity(db, new_user.id, "register")
     
-    return {"message": "Verification Email has been sent on successfully"}
+    return {"message": f"Verification Email has been sent on {new_user.email} successfully"}
 
 
 @router.get("/verify-email/", tags=["auth"])
