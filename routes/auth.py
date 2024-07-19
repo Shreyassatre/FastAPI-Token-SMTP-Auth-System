@@ -107,7 +107,7 @@ async def register_user(username: str, email: EmailStr, full_name: str, password
     new_user = create_user(db, user_create)
 
     verification_token = create_access_token(data={"sub": new_user.username, "action": "email_verification"})
-    verification_link = f"http://localhost:8000/verify-email?token={verification_token}"
+    verification_link = f"https://fastapi-token-smtp-auth-system.onrender.com/verify-email?token={verification_token}"
     email_body = f"""
     <html>
     <body>
@@ -176,7 +176,7 @@ async def password_reset_request(email: EmailStr, db: Session = Depends(get_db),
         data={"sub": user.username, "action": "password_reset"}, expires_delta=reset_token_expires
     )
 
-    reset_link = f"http://localhost:8000/static/reset_password.html?token={reset_token}"
+    reset_link = f"https://fastapi-token-smtp-auth-system.onrender.com/static/reset_password.html?token={reset_token}"
     email_body = f"""
     <html>
     <body>
