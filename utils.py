@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi import Depends, HTTPException, status
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session

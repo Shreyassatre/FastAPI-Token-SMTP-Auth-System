@@ -30,12 +30,12 @@ async def assign_admin(username: str, current_user: UserInDB = Depends(get_curre
     db.add(user)
     db.commit()
     db.refresh(user)
-    log_activity(db, user.id, f"assigned {user.username} as admin")
+    log_activity(db, current_user.id, f"assigned {user.username} as admin")
     log_activity(db, user.id, "user assigned as admin")
     return {"message": f"User {user.username} has been assigned as an admin"}
 
-@router.delete("/admin/users/{user_id}/revoke-role/", tags=["admin"])
-async def revoke_admin_role(user_id: int, current_user: UserInDB = Depends(get_current_active_user), db: Session = Depends(get_db)):
+@router.delete("/admin/users/{username}/revoke-role/", tags=["admin"])
+async def revoke_admin_role(username: str, current_user: UserInDB = Depends(get_current_active_user), db: Session = Depends(get_db)):
     if current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
     
@@ -47,7 +47,7 @@ async def revoke_admin_role(user_id: int, current_user: UserInDB = Depends(get_c
                 headers={"WWW-Authenticate": "Bearer"},
             )
     
-    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    user = db.query(UserModel).filter(UserModel.id == username).first()
     
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -58,7 +58,8 @@ async def revoke_admin_role(user_id: int, current_user: UserInDB = Depends(get_c
     user.role = "user"
     db.add(user)
     db.commit()
-    log_activity(db, user_id, "admin role revoked")
+    log_activity(db, current_user.id, f"assigned {user.username} as admin")
+    log_activity(db, user.id, "admin role revoked")
     
     return {"message": f"Admin role revoked from user {user.username}"}
 
@@ -106,7 +107,7 @@ async def block_user(user_id: int, current_user: UserInDB = Depends(get_current_
     user.disabled = True
     db.add(user)
     db.commit()
-    log_activity(db, user_id, f"admin {current_user.username} blocked user {user.username}")
+    log_activity(db, current_user.id, f"blocked user {user.username}")
     log_activity(db, user.id, "blocked")
     return {"message": f"User {user.username} has been blocked"}
 
@@ -132,7 +133,7 @@ async def unblock_user(user_id: int, current_user: UserInDB = Depends(get_curren
     user.disabled = False
     db.add(user)
     db.commit()
-    log_activity(db, user_id, f"admin {current_user.username} un-blocked user {user.username}")
+    log_activity(db, current_user.id, f"un-blocked user {user.username}")
     log_activity(db, user_id, "un-blocked")
     return {"message": f"User {user.username} has been Un-blocked"}
 
