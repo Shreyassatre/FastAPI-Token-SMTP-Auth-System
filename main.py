@@ -28,7 +28,7 @@ for demonstration purpose admin's 2 factor authentication is disabled.
 - `/login`: 5 requests per minute
 - `/register`: 5 requests per minute
 - `/password-reset-request/`: 5 requests per minute
-- `/reset-password/`: 5 requests per minute
+- `/verify-email/`: 5 requests per minute
 - `/reset-password/`: 5 requests per minute
 
 """

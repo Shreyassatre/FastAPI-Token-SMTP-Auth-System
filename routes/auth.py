@@ -58,7 +58,7 @@ async def login_for_access_token(
         user.otp_verified = False
         otp = generate_otp()
         user.otp = otp
-        user.otp_expiration = datetime.utcnow() + timedelta(minutes=10)
+        user.otp_expiration = datetime.utcnow() + timedelta(minutes=1)
         db.add(user)
         db.commit()
 
