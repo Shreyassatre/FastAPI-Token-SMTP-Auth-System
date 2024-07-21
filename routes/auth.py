@@ -1,21 +1,20 @@
-from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, status, Depends, Form, BackgroundTasks, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from pydantic import EmailStr
 
-
 from ..models import User as UserModel, DeletedUserModel
 from ..schemas import User, UserCreate
 
 from ..utils import authenticate_user, generate_otp, send_email, create_user, create_access_token, get_current_active_user, get_user, log_activity, get_db, get_current_user, get_password_hash
-from ..utils import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, PASSWORD_RESET_TOKEN_EXPIRE_MINUTES, OTP_EXPIRE_MINUTES
+from ..utils import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
 
 router = APIRouter()
 
 @router.post("/verify-otp", tags=["auth"])
-async def verify_otp(otp: str, current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
+async def verify_otp(otp: str = Query(...), current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
     if not current_user.two_factor_authentication_enabled:
         raise HTTPException(status_code=401, detail="Two Factor Authentication is not enabled") 
     
@@ -31,10 +30,12 @@ async def verify_otp(otp: str, current_user: User = Depends(get_current_active_u
     db.add(current_user)
     db.commit()
 
+    log_activity(db, current_user.id, "login")
+
     return {"msg": "OTP verified"}
 
 
-@router.post("/login", tags=["auth"])
+@router.post("/login", tags=["auth"], include_in_schema=False)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()
 ):
@@ -57,7 +58,7 @@ async def login_for_access_token(
         user.otp_verified = False
         otp = generate_otp()
         user.otp = otp
-        user.otp_expiration = datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)
+        user.otp_expiration = datetime.utcnow() + timedelta(minutes=1)
         db.add(user)
         db.commit()
 
@@ -73,8 +74,12 @@ async def login_for_access_token(
         </html>
         """
 
+        log_activity(db, user.id, "requested otp")
+
         background_tasks.add_task(send_email, to=user.email, subject="Your OTP for Login", body=email_body)
 
+    if not user.two_factor_authentication_enabled:
+        log_activity(db, user.id, "login")
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -186,7 +191,6 @@ async def reopen_account(token: str, db: Session = Depends(get_db)):
 
     return {"message": "User account has been reopened successfully"}
 
-
 @router.get("/verify-email/", tags=["auth"])
 async def verify_email(token: str, db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -235,7 +239,7 @@ async def password_reset_request(email: EmailStr, db: Session = Depends(get_db),
         data={"sub": user.username, "action": "password_reset"}, expires_delta=reset_token_expires
     )
 
-    reset_link = f"https://fastapi-token-smtp-auth-system.onrender.com/reset-password?token={reset_token}"
+    reset_link = f"https://fastapi-token-smtp-auth-system.onrender.com/static/reset_password.html?token={reset_token}"
     email_body = f"""
     <html>
     <body>
@@ -249,10 +253,13 @@ async def password_reset_request(email: EmailStr, db: Session = Depends(get_db),
     """
     background_tasks.add_task(send_email, to=user.email, subject="Password Reset Request", body=email_body)
 
+    log_activity(db, user.id, "requested password reset")
+
     return {"message": "Password reset link has been sent to your email"}
 
+
 @router.post("/reset-password", tags=["auth"])
-async def reset_password(token: str, new_password: str, db: Session = Depends(get_db)):
+async def reset_password(token: str = Query(...), new_password: str = Query(...), db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -270,5 +277,5 @@ async def reset_password(token: str, new_password: str, db: Session = Depends(ge
     user.hashed_password = hashed_password
     db.add(user)
     db.commit()
-    log_activity(db, user.id, "password_reset")
+    log_activity(db, user.id, "password reset")
     return {"message": "Password has been reset successfully"}
