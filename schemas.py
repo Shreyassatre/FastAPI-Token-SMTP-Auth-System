@@ -34,3 +34,13 @@ class UserActivityLogSchema(BaseModel):
     user_id: int
     activity_type: str
     timestamp: datetime
+
+class DeletedUser(BaseModel):
+    id: int
+    username: str
+    email: str
+    full_name: Optional[str] = None
+    hashed_password: str
+    role: str
+    created_at: datetime
+

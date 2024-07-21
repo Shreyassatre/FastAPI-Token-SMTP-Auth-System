@@ -1,20 +1,21 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Form, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from pydantic import EmailStr
 
-from ..models import User as UserModel
+
+from ..models import User as UserModel, DeletedUserModel
 from ..schemas import User, UserCreate
 
 from ..utils import authenticate_user, generate_otp, send_email, create_user, create_access_token, get_current_active_user, get_user, log_activity, get_db, get_current_user, get_password_hash
-from ..utils import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
+from ..utils import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, PASSWORD_RESET_TOKEN_EXPIRE_MINUTES, OTP_EXPIRE_MINUTES
 
 router = APIRouter()
 
 @router.post("/verify-otp", tags=["auth"])
-async def verify_otp(otp: str = Query(...), current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
+async def verify_otp(otp: str, current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):
     if not current_user.two_factor_authentication_enabled:
         raise HTTPException(status_code=401, detail="Two Factor Authentication is not enabled") 
     
@@ -30,12 +31,10 @@ async def verify_otp(otp: str = Query(...), current_user: User = Depends(get_cur
     db.add(current_user)
     db.commit()
 
-    log_activity(db, current_user.id, "login")
-
     return {"msg": "OTP verified"}
 
 
-@router.post("/login", tags=["auth"], include_in_schema=False)
+@router.post("/login", tags=["auth"])
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()
 ):
@@ -58,7 +57,7 @@ async def login_for_access_token(
         user.otp_verified = False
         otp = generate_otp()
         user.otp = otp
-        user.otp_expiration = datetime.utcnow() + timedelta(minutes=1)
+        user.otp_expiration = datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)
         db.add(user)
         db.commit()
 
@@ -74,12 +73,8 @@ async def login_for_access_token(
         </html>
         """
 
-        log_activity(db, user.id, "requested otp")
-
         background_tasks.add_task(send_email, to=user.email, subject="Your OTP for Login", body=email_body)
 
-    if not user.two_factor_authentication_enabled:
-        log_activity(db, user.id, "login")
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -92,11 +87,35 @@ async def login_for_access_token(
 @router.post("/register/", tags=["auth"])
 async def register_user(username: str, email: EmailStr, full_name: str, password: str, db: Session = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()):
     db_user = get_user(db, username)
+
     if db_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered",
         )
+    
+
+    deleted_user = db.query(DeletedUserModel).filter(DeletedUserModel.email == email).first()
+    if deleted_user:
+        verification_token = create_access_token(data={"sub": deleted_user.username, "action": "reopen_account"})
+        verification_link = f"http://localhost:8000/reopen-account?token={verification_token}"
+        email_body = f"""
+        <html>
+        <body>
+            <p>Hello {deleted_user.username},</p>
+            <p>To Reopen your account, click on the button below:</p>
+            <p><a href="{verification_link}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">Reopen Account</a></p>
+            <p>If you did not requested for it, please ignore this email.</p>
+            <br/>
+            <p>Thank you</p>
+        </body>
+        </html>
+        """
+
+        background_tasks.add_task(send_email, to=deleted_user.email, subject="Account Re-activation", body=email_body)
+
+        background_tasks.add_task(send_email, to=deleted_user.email, subject="Account Reopening", body=email_body)
+        return {"message": f"Account reopening link has been sent to {deleted_user.email} successfully"}
     
     user_create = UserCreate(
         username=username,
@@ -107,7 +126,7 @@ async def register_user(username: str, email: EmailStr, full_name: str, password
     new_user = create_user(db, user_create)
 
     verification_token = create_access_token(data={"sub": new_user.username, "action": "email_verification"})
-    verification_link = f"https://fastapi-token-smtp-auth-system.onrender.com/verify-email?token={verification_token}"
+    verification_link = f"http://localhost:8000/verify-email?token={verification_token}"
     email_body = f"""
     <html>
     <body>
@@ -125,7 +144,47 @@ async def register_user(username: str, email: EmailStr, full_name: str, password
 
     log_activity(db, new_user.id, "register")
     
-    return {"message": f"Verification Email has been sent on {new_user.email} successfully"}
+    return {"message": "Verification Email has been sent on successfully"}
+
+
+@router.get("/reopen-account/", tags=["auth"])
+async def reopen_account(token: str, db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        action: str = payload.get("action")
+        if username is None or action != "reopen_account":
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    deleted_user = db.query(DeletedUserModel).filter(DeletedUserModel.username == username).first()
+    if not deleted_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found in deleted accounts")
+
+    reinstated_user = UserModel(
+        username=deleted_user.username,
+        email=deleted_user.email,
+        full_name=deleted_user.full_name,
+        hashed_password=deleted_user.hashed_password,
+        role=deleted_user.role,
+        verified=True,
+        created_at=deleted_user.created_at
+    )
+    db.add(reinstated_user)
+    db.commit()
+
+    db.delete(deleted_user)
+    db.commit()
+
+    log_activity(db, reinstated_user.id, "account reopened")
+
+    return {"message": "User account has been reopened successfully"}
 
 
 @router.get("/verify-email/", tags=["auth"])
@@ -176,7 +235,7 @@ async def password_reset_request(email: EmailStr, db: Session = Depends(get_db),
         data={"sub": user.username, "action": "password_reset"}, expires_delta=reset_token_expires
     )
 
-    reset_link = f"https://fastapi-token-smtp-auth-system.onrender.com/static/reset_password.html?token={reset_token}"
+    reset_link = f"http://localhost:8000/reset-password?token={reset_token}"
     email_body = f"""
     <html>
     <body>
@@ -190,13 +249,10 @@ async def password_reset_request(email: EmailStr, db: Session = Depends(get_db),
     """
     background_tasks.add_task(send_email, to=user.email, subject="Password Reset Request", body=email_body)
 
-    log_activity(db, user.id, "requested password reset")
-
     return {"message": "Password reset link has been sent to your email"}
 
-
 @router.post("/reset-password", tags=["auth"])
-async def reset_password(token: str = Query(...), new_password: str = Query(...), db: Session = Depends(get_db)):
+async def reset_password(token: str, new_password: str, db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -214,5 +270,5 @@ async def reset_password(token: str = Query(...), new_password: str = Query(...)
     user.hashed_password = hashed_password
     db.add(user)
     db.commit()
-    log_activity(db, user.id, "password reset")
+    log_activity(db, user.id, "password_reset")
     return {"message": "Password has been reset successfully"}

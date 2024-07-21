@@ -38,3 +38,15 @@ class UserActivityLog(Base):
     timestamp = Column(DateTime, index=True, default=datetime.utcnow)
 
     user = relationship("User", back_populates="activity_logs")
+
+class DeletedUserModel(Base):
+    __tablename__ = "deleted_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, index=True)
+    email = Column(String, index=True)
+    full_name = Column(String)
+    hashed_password = Column(String)
+    role = Column(String)
+    created_at = Column(DateTime)
+    deleted_at = Column(DateTime, default=datetime.utcnow)
