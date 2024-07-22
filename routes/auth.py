@@ -8,7 +8,7 @@ from pydantic import EmailStr
 from ..models import User as UserModel, DeletedUserModel
 from ..schemas import User, UserCreate
 
-from ..utils import authenticate_user, generate_otp, send_email, create_user, create_access_token, get_current_active_user, get_user, log_activity, get_db, get_current_user, get_password_hash
+from ..utils import authenticate_user, generate_otp, send_email, create_user, create_access_token, get_current_active_user, get_user, get_email, log_activity, get_db, get_current_user, get_password_hash
 from ..utils import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
 
 router = APIRouter()
@@ -92,11 +92,18 @@ async def login_for_access_token(
 @router.post("/register/", tags=["auth"])
 async def register_user(username: str, email: EmailStr, full_name: str, password: str, db: Session = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()):
     db_user = get_user(db, username)
+    db_email = get_email(db, email)
 
     if db_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered",
+        )
+    
+    if db_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username with this email arlady exists",
         )
     
 

@@ -56,6 +56,9 @@ def get_password_hash(password):
 def get_user(db: Session, username: str):
     return db.query(UserModel).filter(UserModel.username == username).first()
 
+def get_email(db: Session, email: str):
+    return db.query(UserModel).filter(UserModel.email == email).first()
+
 def create_user(db: Session, user: UserCreate):
     hashed_password = get_password_hash(user.password)
     db_user = UserModel(
